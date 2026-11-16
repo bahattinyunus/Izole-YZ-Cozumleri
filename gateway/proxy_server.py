@@ -1,8 +1,10 @@
 """
 Hafif ve İzole Kurumsal Yapay Zeka Ağ Geçidi (Sovereign AI Gateway)
 Standard Library (Sıfır ek bağımlılık) ile çalışır.
-OpenAI API uyumlu istekleri kabul eder, DLP filtresinden geçirir,
-yerel LLM servisine (Ollama / vLLM) iletir veya izole modda yanıtlar.
+OpenAI API uyumlu istekleri kabul eder:
+- 🛡️ Prompt Guard: Jailbreak ve Enjeksiyon Saldırılarını engeller.
+- 🔍 DLP Sanitizer: TCKN, Kredi Kartı, IBAN ve Gizli Anahtarları maskeler.
+- 📜 Audit Logger: SHA-256 tabanlı değiştirilemez yerel denetim günlüğü tutar.
 """
 
 import sys
@@ -17,14 +19,17 @@ from pathlib import Path
 try:
     from gateway.sanitizer import PIISanitizer
     from gateway.audit_logger import AuditLogger
+    from gateway.prompt_guard import PromptGuard
 except ImportError:
     from sanitizer import PIISanitizer
     from audit_logger import AuditLogger
+    from prompt_guard import PromptGuard
 
-UPSTREAM_LLM_URL = "http://127.0.0.1:11434/v1/chat/completions" # Varsayılan Ollama/vLLM portu
-UPSTREAM_ENABLED = False # True yapıldığında yerel Ollama/vLLM'e köprü kurar
+UPSTREAM_LLM_URL = "http://127.0.0.1:11434/v1/chat/completions"
+UPSTREAM_ENABLED = False
 
 sanitizer = PIISanitizer()
+prompt_guard = PromptGuard(risk_threshold=50)
 audit_logger = AuditLogger(log_dir="logs")
 
 class SovereignGatewayHandler(BaseHTTPRequestHandler):
@@ -40,6 +45,7 @@ class SovereignGatewayHandler(BaseHTTPRequestHandler):
             res = {
                 "status": "healthy",
                 "mode": "Air-Gapped Sovereign Gateway",
+                "prompt_guard_active": True,
                 "dlp_active": True,
                 "audit_logging": True,
                 "timestamp": time.time()
@@ -77,22 +83,48 @@ class SovereignGatewayHandler(BaseHTTPRequestHandler):
             user_id = self.headers.get("X-User-Id", "anonymous_corp_user")
             client_ip = self.client_address[0]
 
-            # 1. DLP & Sanitization Aşama
+            raw_text_combined = " ".join([str(m.get("content", "")) for m in messages])
+
+            # 1. Prompt Guard Güvenlik Denetimi (Jailbreak & Enjeksiyon Taraması)
+            security_check = prompt_guard.inspect_prompt(raw_text_combined)
+            if security_check["is_blocked"]:
+                latency = (time.time() - start_time) * 1000.0
+                audit_logger.log_transaction(
+                    user_id=user_id,
+                    client_ip=client_ip,
+                    model=model,
+                    raw_prompt=raw_text_combined,
+                    sanitized_prompt="[ENGEL_GÜVENLİK_İHLALİ]",
+                    redactions=[],
+                    status="BLOCKED_SECURITY_VIOLATION",
+                    latency_ms=latency
+                )
+                self._set_headers(403)
+                block_res = {
+                    "error": {
+                        "message": "İstem güvenlik politikası nedeniyle reddedildi (Prompt Injection / Jailbreak tespit edildi).",
+                        "type": "security_policy_violation",
+                        "risk_score": security_check["risk_score"],
+                        "violations": security_check["violations"]
+                    }
+                }
+                self.wfile.write(json.dumps(block_res, ensure_ascii=False, indent=2).encode("utf-8"))
+                return
+
+            # 2. DLP & Sanitization Aşama (PII Verilerini Maskele)
             total_redactions = []
             sanitized_messages = []
-            raw_text_combined = ""
 
             for msg in messages:
-                content = msg.get("content", "")
-                raw_text_combined += str(content) + " "
-                clean_content, reds = sanitizer.sanitize(str(content))
+                content = str(msg.get("content", ""))
+                clean_content, reds = sanitizer.sanitize(content)
                 if reds:
                     total_redactions.extend(reds)
                 sanitized_messages.append({"role": msg.get("role"), "content": clean_content})
 
             payload["messages"] = sanitized_messages
 
-            # 2. Upstream Local LLM'e ilet veya Güvenli Çevrimdışı Simülatör çalıştır
+            # 3. Upstream Local LLM'e ilet veya Güvenli Çevrimdışı Simülatör çalıştır
             response_content = ""
             if UPSTREAM_ENABLED:
                 try:
@@ -112,11 +144,11 @@ class SovereignGatewayHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps(err).encode("utf-8"))
                     return
             else:
-                # Hava boşluklu bağımsız gösterim yanıtı (Demo / Mock Local Mode)
                 response_content = (
-                    "🛡️ [İzole YZ Ağ Geçidi Yanıtı]: İsteminiz güvenle işlendi. "
-                    f"DLP Taraması tamamlandı: {len(total_redactions)} adet hassas veri maskelendi. "
-                    "Veriniz internete veya kamu bulutuna çıkmadan yerel çitte tutulmaktadır."
+                    "🛡️ [İzole YZ Ağ Geçidi]: İsteminiz güvenle işlendi. "
+                    f"Güvenlik Skoru: Temiz (Risk: {security_check['risk_score']}/100). "
+                    f"DLP Taraması: {len(total_redactions)} adet hassas veri maskelendi. "
+                    "Veriniz yerel sınırların dışına çıkmadan işlenmektedir."
                 )
                 res_mock = {
                     "id": f"chatcmpl-sovereign-{int(time.time())}",
@@ -136,8 +168,10 @@ class SovereignGatewayHandler(BaseHTTPRequestHandler):
                         "completion_tokens": len(response_content.split()),
                         "total_tokens": len(raw_text_combined.split()) + len(response_content.split())
                     },
-                    "dlp_audit": {
-                        "redactions_applied": len(total_redactions),
+                    "security_audit": {
+                        "prompt_guard_passed": True,
+                        "risk_score": security_check["risk_score"],
+                        "dlp_redactions_applied": len(total_redactions),
                         "items": total_redactions
                     }
                 }
@@ -146,7 +180,7 @@ class SovereignGatewayHandler(BaseHTTPRequestHandler):
 
             latency = (time.time() - start_time) * 1000.0
             
-            # 3. Güvenli Yerel Denetim Logu
+            # 4. Güvenli Yerel Denetim Logu
             audit_logger.log_transaction(
                 user_id=user_id,
                 client_ip=client_ip,
@@ -166,7 +200,8 @@ def run_server(host="0.0.0.0", port=8080):
     print("=" * 64)
     print(f" 🛡️  İzole YZ Kurumsal Ağ Geçidi Başlatıldı")
     print(f" 🌐 Dinleme Adresi : http://{host}:{port}")
-    print(f" 🔒 DLP Sanitizer   : AKTİF (TCKN, CC, IBAN, API Key, Email, Phone)")
+    print(f" ⚔️  Prompt Guard   : AKTİF (Jailbreak & Enjeksiyon Kalkanı)")
+    print(f" 🔒 DLP Sanitizer   : AKTİF (TCKN, CC, IBAN, API Key, Tel)")
     print(f" 📜 Denetim Günlüğü : logs/ dizinine JSONL olarak yazılıyor")
     print("=" * 64)
     try:

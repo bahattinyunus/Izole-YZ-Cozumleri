@@ -1,0 +1,38 @@
+name: Sovereign AI CI & Security Suite
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Repoyu Klonla
+        uses: actions/checkout@v4
+
+      - name: Python Ortamını Hazırla
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Birim ve Entegrasyon Testlerini Çalıştır
+        run: |
+          python -m unittest discover gateway/tests -v
+
+      - name: CLI ve Donanım Hesaplayıcıyı Doğrula
+        run: |
+          python sovereign_ctl.py status
+          python sovereign_ctl.py scan-prompt "TCKN: 11111111111 ve email test@corp.local"
+          python tools/hardware_calculator.py -p 8b -q awq-4bit
+          python examples/isolated_rag/rag_pipeline.py
+
+      - name: Docker Yapılandırmasını Doğrula
+        run: |
+          docker compose -f docker/docker-compose.airgapped.yml config
