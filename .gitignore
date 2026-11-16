@@ -1,0 +1,75 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets
+.env
+.env.local
+*.env
+!.env.example
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local Model Weights & Cache
+models/
+weights/
+*.bin
+*.safetensors
+*.gguf
+*.pt
+*.onnx
+*.tar.gz
+*.zip
+
+# Database / Vector storage local data
+data/
+qdrant_storage/
+milvus_data/
+chroma_db/
+*.sqlite3
+*.db
+
+# Logs
+logs/
+*.log
+
+# Temp & testing
+.pytest_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,104 @@
+version: '3.8'
+
+# ==============================================================================
+# 🛡️ İzole YZ Çözümleri: Tamamen Hava Boşluklu (Air-Gapped) Docker Stack
+# İnternet erişimi olmayan, sadece kurum içi LAN / DMZ üzerinden erişilen mimari.
+# ==============================================================================
+
+networks:
+  # 'internal: true' bayrağı ile bu ağdaki konteynerlerin dış dünyaya (internete)
+  # çıkışı Docker daemon seviyesinde kesin olarak engellenir.
+  sovereign-airgap-net:
+    driver: bridge
+    internal: true
+  
+  # Kurum içi çalışanların erişeceği sınırlı LAN / Intranet köprüsü
+  corporate-lan-net:
+    driver: bridge
+
+services:
+  # --------------------------------------------------------------------------
+  # 1. YEREL LLM INFERENCE MOTORU (vLLM / Ollama)
+  # --------------------------------------------------------------------------
+  llm-engine:
+    image: ollama/ollama:latest
+    container_name: sovereign-llm-engine
+    restart: unless-stopped
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_NUM_PARALLEL=4
+      - OLLAMA_FLASH_ATTENTION=1
+    volumes:
+      - ./models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - sovereign-airgap-net
+
+  # --------------------------------------------------------------------------
+  # 2. İZOLE VEKTÖR VERİTABANI (Qdrant)
+  # --------------------------------------------------------------------------
+  vector-db:
+    image: qdrant/qdrant:latest
+    container_name: sovereign-qdrant
+    restart: unless-stopped
+    environment:
+      - QDRANT__TELEMETRY_DISABLED=true
+    volumes:
+      - ./storage/qdrant_data:/qdrant/storage
+    networks:
+      - sovereign-airgap-net
+
+  # --------------------------------------------------------------------------
+  # 3. GÜVENLİK VE DLP AĞ GEÇİDİ (Sovereign AI Gateway)
+  # Gelen tüm istemleri inceler, TCKN/PII maskeler ve denetim günlüğü tutar.
+  # --------------------------------------------------------------------------
+  sovereign-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    container_name: sovereign-gateway
+    restart: unless-stopped
+    environment:
+      - UPSTREAM_LLM_URL=http://llm-engine:11434/v1/chat/completions
+      - UPSTREAM_ENABLED=true
+      - PORT=8080
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8080:8080"
+    networks:
+      - sovereign-airgap-net
+      - corporate-lan-net
+    depends_on:
+      - llm-engine
+
+  # --------------------------------------------------------------------------
+  # 4. KURUMSAL CHAT ARAYÜZÜ (Open WebUI)
+  # Dış telemetrileri ve harici kaynakları kapalı çalışan arayüz.
+  # --------------------------------------------------------------------------
+  corporate-ui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: sovereign-webui
+    restart: unless-stopped
+    environment:
+      - OPENAI_API_BASE_URL=http://sovereign-gateway:8080/v1
+      - OPENAI_API_KEY=sovereign-local-token
+      - WEBUI_AUTH=true
+      - SCARF_NO_ANALYTICS=true
+      - DO_NOT_TRACK=true
+      - ANONYMIZED_TELEMETRY=false
+    volumes:
+      - ./storage/webui_data:/app/backend/data
+    ports:
+      - "3000:8080"
+    networks:
+      - sovereign-airgap-net
+      - corporate-lan-net
+    depends_on:
+      - sovereign-gateway
