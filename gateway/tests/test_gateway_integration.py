@@ -76,5 +76,20 @@ class TestGatewayIntegration(unittest.TestCase):
             self.assertEqual(error_data["error"]["type"], "security_policy_violation")
             self.assertGreater(error_data["error"]["risk_score"], 40)
 
+    def test_metrics_and_audit_verify_endpoints(self):
+        metrics_url = f"http://127.0.0.1:{self.port}/metrics"
+        with urllib.request.urlopen(urllib.request.Request(metrics_url)) as resp:
+            self.assertEqual(resp.status, 200)
+            mdata = json.loads(resp.read().decode("utf-8"))
+            self.assertIn("total_requests", mdata)
+            self.assertIn("dlp_redactions_total", mdata)
+
+        verify_url = f"http://127.0.0.1:{self.port}/v1/audit/verify"
+        with urllib.request.urlopen(urllib.request.Request(verify_url)) as resp:
+            self.assertEqual(resp.status, 200)
+            vdata = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(vdata["verified"])
+
+
 if __name__ == "__main__":
     unittest.main()

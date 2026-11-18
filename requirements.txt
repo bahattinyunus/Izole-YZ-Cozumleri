@@ -1,0 +1,9 @@
+# Core dependencies for Air-Gapped / Sovereign AI Gateway
+# Note: The core gateway and CLI run with Python Standard Library (Zero-Dependency).
+# Optional development, benchmarking and typing packages:
+
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+black>=24.0.0
+flake8>=7.0.0
+requests>=2.31.0

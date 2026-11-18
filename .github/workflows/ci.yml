@@ -29,7 +29,8 @@ jobs:
       - name: CLI ve Donanım Hesaplayıcıyı Doğrula
         run: |
           python sovereign_ctl.py status
-          python sovereign_ctl.py scan-prompt "TCKN: 11111111111 ve email test@corp.local"
+          python sovereign_ctl.py scan-prompt "TCKN: 10000000146 ve email test@corp.local"
+          python sovereign_ctl.py verify-audit
           python tools/hardware_calculator.py -p 8b -q awq-4bit
           python examples/isolated_rag/rag_pipeline.py
 
